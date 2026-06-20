@@ -446,6 +446,7 @@ pi-onboard ships as a public Pi package installable from npm or git and listed o
   "name": "@nathanpt/pi-onboard",
   "version": "0.1.0",
   "description": "Pi extension for onboarding into a repository: generates AGENTS.md and a visual HTML overview.",
+  "license": "MIT",
   "type": "module",
   "keywords": ["pi-package"],
   "pi": {

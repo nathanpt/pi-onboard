@@ -84,3 +84,7 @@ outbound network calls**; the HTTP server is the only network surface.
 - [`docs/DESIGN.md`](./docs/DESIGN.md) — full design.
 - [`docs/RESEARCH_FINDINGS.md`](./docs/RESEARCH_FINDINGS.md) — survey of similar
   tools and the patterns adopted.
+
+## License
+
+MIT © [Nathan Peet](https://github.com/nathanpt). See [LICENSE](./LICENSE).
