@@ -11,7 +11,8 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 import { getArgumentCompletions, parseArgs, USAGE } from "./flags.ts";
 import { discover } from "./discovery.ts";
 import { synthesize } from "./synthesis.ts";
-import type { Options } from "./types.ts";
+import { generateAgentsMd, writeAgentsMd, type WriteResult } from "./agents-md.ts";
+import { DEFAULT_PREFERENCES, type Options } from "./types.ts";
 
 export default function onboardExtension(pi: ExtensionAPI) {
   pi.registerCommand("onboard", {
@@ -40,10 +41,21 @@ export default function onboardExtension(pi: ExtensionAPI) {
  * Later phases implement the full DESIGN.md "Expected MVP flow".
  */
 async function runOnboard(opts: Options, ctx: ExtensionCommandContext): Promise<void> {
-  // Phase 3: verify synthesis
+  // Phase 4: verify AGENTS.md generation
   const repo = discover(ctx.cwd);
   const analysis = synthesize(repo);
+  const prefs = DEFAULT_PREFERENCES;
+  const content = generateAgentsMd(analysis, prefs);
+
+  if (opts.dryRun) {
+    // eslint-disable-next-line no-console
+    console.log("[pi-onboard] AGENTS.md (dry-run):\n" + content);
+    ctx.ui.notify("pi-onboard: dry-run preview printed to console", "info");
+    return;
+  }
+
+  const result = writeAgentsMd(ctx.cwd, content, opts.force, opts.dryRun);
   // eslint-disable-next-line no-console
-  console.log("[pi-onboard] analysis:", JSON.stringify(analysis, null, 2));
-  ctx.ui.notify(`pi-onboard: ${analysis.name} — ${analysis.commands.length} cmds, ${analysis.stack.length} stack items`, "info");
+  console.log(`[pi-onboard] AGENTS.md ${result.action}: ${result.path}`);
+  ctx.ui.notify(`pi-onboard: ${result.action} ${result.path}`, "info");
 }
