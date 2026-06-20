@@ -12,6 +12,7 @@ import { getArgumentCompletions, parseArgs, USAGE } from "./flags.ts";
 import { discover } from "./discovery.ts";
 import { synthesize } from "./synthesis.ts";
 import { generateAgentsMd, writeAgentsMd, type WriteResult } from "./agents-md.ts";
+import { generateHtml, writeHtml } from "./html.ts";
 import { DEFAULT_PREFERENCES, type Options } from "./types.ts";
 
 export default function onboardExtension(pi: ExtensionAPI) {
@@ -57,5 +58,14 @@ async function runOnboard(opts: Options, ctx: ExtensionCommandContext): Promise<
   const result = writeAgentsMd(ctx.cwd, content, opts.force, opts.dryRun);
   // eslint-disable-next-line no-console
   console.log(`[pi-onboard] AGENTS.md ${result.action}: ${result.path}`);
+
+  // HTML overview (unless --text-only)
+  if (!opts.textOnly) {
+    const htmlContent = generateHtml(analysis, prefs);
+    const htmlResult = writeHtml(ctx.cwd, htmlContent, opts.force, opts.dryRun);
+    // eslint-disable-next-line no-console
+    console.log(`[pi-onboard] HTML ${htmlResult.action}: ${htmlResult.path}`);
+  }
+
   ctx.ui.notify(`pi-onboard: ${result.action} ${result.path}`, "info");
 }
