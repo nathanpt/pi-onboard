@@ -9,6 +9,7 @@
  */
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { getArgumentCompletions, parseArgs, USAGE } from "./flags.ts";
+import { discover } from "./discovery.ts";
 import type { Options } from "./types.ts";
 
 export default function onboardExtension(pi: ExtensionAPI) {
@@ -38,7 +39,9 @@ export default function onboardExtension(pi: ExtensionAPI) {
  * Later phases implement the full DESIGN.md "Expected MVP flow".
  */
 async function runOnboard(opts: Options, ctx: ExtensionCommandContext): Promise<void> {
+  // Phase 2: verify discovery
+  const repo = discover(ctx.cwd);
   // eslint-disable-next-line no-console
-  console.log("[pi-onboard] not implemented yet. parsed options:", JSON.stringify(opts));
-  ctx.ui.notify("pi-onboard: not implemented yet", "info");
+  console.log("[pi-onboard] discovery:", JSON.stringify(repo, null, 2));
+  ctx.ui.notify(`pi-onboard: discovered ${repo.name} — ${repo.topDirs.length} dirs, ${repo.languages.length} langs`, "info");
 }
