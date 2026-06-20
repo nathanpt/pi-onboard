@@ -14,7 +14,8 @@ import { synthesize } from "./synthesis.ts";
 import { generateAgentsMd, writeAgentsMd, type WriteResult } from "./agents-md.ts";
 import { generateHtml, writeHtml } from "./html.ts";
 import { ensureServer, closeServer } from "./server.ts";
-import { DEFAULT_PREFERENCES, type Options } from "./types.ts";
+import { maybeInterview } from "./interview.ts";
+import { DEFAULT_PREFERENCES, type Options, type Confidence } from "./types.ts";
 
 export default function onboardExtension(pi: ExtensionAPI) {
   // Close any active server on session shutdown (cleanup insurance).
@@ -38,7 +39,7 @@ export default function onboardExtension(pi: ExtensionAPI) {
         ctx.ui.notify(w, "warning");
       }
 
-      await runOnboard(result, ctx);
+      await runOnboard(pi, result, ctx);
     },
   });
 }
@@ -47,11 +48,21 @@ export default function onboardExtension(pi: ExtensionAPI) {
  * Main orchestration. Phase 1 stub — wired to confirm the command loads.
  * Later phases implement the full DESIGN.md "Expected MVP flow".
  */
-async function runOnboard(opts: Options, ctx: ExtensionCommandContext): Promise<void> {
-  // Phase 4: verify AGENTS.md generation
+async function runOnboard(pi: ExtensionAPI, opts: Options, ctx: ExtensionCommandContext): Promise<void> {
+  // 1. Discovery
   const repo = discover(ctx.cwd);
+
+  // 2. Preference interview (before generation, after discovery)
+  const { prefs, note: interviewNote } = await maybeInterview(pi, ctx, opts);
+
+  // 3. Synthesis (apply confidence floor from prefs)
   const analysis = synthesize(repo);
-  const prefs = DEFAULT_PREFERENCES;
+  const floorRank: Record<Confidence, number> = { high: 3, medium: 2, low: 1 };
+  analysis.commands = analysis.commands.filter(
+    (c) => floorRank[c.confidence] >= floorRank[prefs.floor],
+  );
+
+  // 4. Generate AGENTS.md
   const content = generateAgentsMd(analysis, prefs);
 
   if (opts.dryRun) {
@@ -87,4 +98,10 @@ async function runOnboard(opts: Options, ctx: ExtensionCommandContext): Promise<
   }
 
   ctx.ui.notify(`pi-onboard: ${result.action} ${result.path}`, "info");
+
+  // Interview fallback note
+  if (interviewNote) {
+    // eslint-disable-next-line no-console
+    console.log(`[pi-onboard] ${interviewNote}`);
+  }
 }
