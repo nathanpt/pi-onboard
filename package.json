@@ -4,9 +4,11 @@
   "description": "Pi extension for onboarding into a repository: generates AGENTS.md and a visual HTML overview.",
   "license": "MIT",
   "type": "module",
+  "files": ["extensions/", "README.md", "LICENSE"],
   "keywords": ["pi-package"],
   "pi": {
-    "extensions": ["./extensions/index.ts"]
+    "extensions": ["./extensions/index.ts"],
+    "image": "https://raw.githubusercontent.com/nathanpt/pi-onboard/main/docs/preview.png"
   },
   "publishConfig": {
     "access": "public"
