@@ -39,7 +39,7 @@ export default function onboardExtension(pi: ExtensionAPI) {
         ctx.ui.notify(w, "warning");
       }
 
-      await runOnboard(pi, result, ctx);
+      await runOnboard(result, ctx);
     },
   });
 }
@@ -48,7 +48,7 @@ export default function onboardExtension(pi: ExtensionAPI) {
  * Main orchestration per DESIGN.md "Expected MVP flow":
  * validate → discover → interview → synthesize → write AGENTS.md → write HTML → serve → summary.
  */
-async function runOnboard(pi: ExtensionAPI, opts: Options, ctx: ExtensionCommandContext): Promise<void> {
+async function runOnboard(opts: Options, ctx: ExtensionCommandContext): Promise<void> {
   // 1. Discovery
   let repo;
   try {
@@ -62,7 +62,7 @@ async function runOnboard(pi: ExtensionAPI, opts: Options, ctx: ExtensionCommand
   let prefs = DEFAULT_PREFERENCES;
   let interviewNote: string | undefined;
   try {
-    const result = await maybeInterview(pi, ctx, opts);
+    const result = await maybeInterview(null, ctx, opts);
     prefs = result.prefs;
     interviewNote = result.note;
   } catch {
