@@ -13,9 +13,15 @@ import { discover } from "./discovery.ts";
 import { synthesize } from "./synthesis.ts";
 import { generateAgentsMd, writeAgentsMd, type WriteResult } from "./agents-md.ts";
 import { generateHtml, writeHtml } from "./html.ts";
+import { ensureServer, closeServer } from "./server.ts";
 import { DEFAULT_PREFERENCES, type Options } from "./types.ts";
 
 export default function onboardExtension(pi: ExtensionAPI) {
+  // Close any active server on session shutdown (cleanup insurance).
+  pi.on("session_shutdown", () => {
+    closeServer();
+  });
+
   pi.registerCommand("onboard", {
     description: "Onboard into a repo: generate AGENTS.md and HTML overview",
     getArgumentCompletions,
@@ -65,6 +71,19 @@ async function runOnboard(opts: Options, ctx: ExtensionCommandContext): Promise<
     const htmlResult = writeHtml(ctx.cwd, htmlContent, opts.force, opts.dryRun);
     // eslint-disable-next-line no-console
     console.log(`[pi-onboard] HTML ${htmlResult.action}: ${htmlResult.path}`);
+
+    // Serve the HTML overview (unless --no-serve)
+    if (!opts.noServe && !opts.dryRun) {
+      const serverInfo = await ensureServer(ctx.cwd, opts);
+      if (serverInfo) {
+        // eslint-disable-next-line no-console
+        console.log(`[pi-onboard] Serving ${serverInfo.reused ? "(reusing)" : "(started)"}:`);
+        for (const url of serverInfo.urls) {
+          // eslint-disable-next-line no-console
+          console.log(`  ${url}`);
+        }
+      }
+    }
   }
 
   ctx.ui.notify(`pi-onboard: ${result.action} ${result.path}`, "info");
