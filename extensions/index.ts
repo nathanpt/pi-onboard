@@ -1,21 +1,19 @@
 /**
  * pi-onboard — Pi extension for repository onboarding.
  *
- * Registers the /onboard command which inspects a repo and generates durable
- * onboarding artifacts (AGENTS.md + HTML overview), plus an HTTP server so the
- * HTML is reachable from remote machines.
+ * The /onboard command does a quick static discovery pass, then fills the
+ * editor with a structured prompt for the AI agent. The user presses Enter
+ * and the agent reads key files, writes AGENTS.md and pi-onboard-overview.html.
  *
- * Entry point: default-export factory receiving the Pi ExtensionAPI.
+ * Architecture: AI-driven prompt. Static discovery provides context; the
+ * agent provides understanding. We use setEditorText instead of
+ * sendUserMessage to avoid stale-ctx errors in co-loaded extensions.
  */
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { getArgumentCompletions, parseArgs, USAGE } from "./flags.ts";
 import { discover } from "./discovery.ts";
-import { synthesize } from "./synthesis.ts";
-import { generateAgentsMd, writeAgentsMd } from "./agents-md.ts";
-import { generateHtml, writeHtml } from "./html.ts";
 import { ensureServer, closeServer, type ServerInfo } from "./server.ts";
-import { maybeInterview } from "./interview.ts";
-import { DEFAULT_PREFERENCES, type Options, type Confidence, type Analysis } from "./types.ts";
+import type { Options } from "./types.ts";
 
 export default function onboardExtension(pi: ExtensionAPI) {
   // Close any active server on session shutdown (cleanup insurance).
@@ -45,11 +43,11 @@ export default function onboardExtension(pi: ExtensionAPI) {
 }
 
 /**
- * Main orchestration per DESIGN.md "Expected MVP flow":
- * validate → discover → interview → synthesize → write AGENTS.md → write HTML → serve → summary.
+ * Main flow: discover → start server → build prompt → fill editor.
+ * The user presses Enter and the agent does the rest.
  */
 async function runOnboard(opts: Options, ctx: ExtensionCommandContext): Promise<void> {
-  // 1. Discovery
+  // 1. Quick static discovery for context
   let repo;
   try {
     repo = discover(ctx.cwd);
@@ -58,66 +56,7 @@ async function runOnboard(opts: Options, ctx: ExtensionCommandContext): Promise<
     return;
   }
 
-  // 2. Preference interview
-  let prefs = DEFAULT_PREFERENCES;
-  let interviewNote: string | undefined;
-  try {
-    const result = await maybeInterview(null, ctx, opts);
-    prefs = result.prefs;
-    interviewNote = result.note;
-  } catch {
-    interviewNote = "Preference interview failed — used defaults";
-  }
-
-  // 3. Synthesis (apply confidence floor from prefs)
-  let analysis: Analysis;
-  try {
-    analysis = synthesize(repo);
-    const floorRank: Record<Confidence, number> = { high: 3, medium: 2, low: 1 };
-    analysis.commands = analysis.commands.filter(
-      (c) => floorRank[c.confidence] >= floorRank[prefs.floor],
-    );
-  } catch (e) {
-    ctx.ui.notify(`pi-onboard: synthesis failed — ${e}`, "error");
-    return;
-  }
-
-  // 4. Generate content
-  const agentsContent = generateAgentsMd(analysis, prefs);
-  const htmlContent = !opts.textOnly ? generateHtml(analysis, prefs) : "";
-
-  // 5. Dry-run: preview without writing
-  if (opts.dryRun) {
-    ctx.ui.notify("pi-onboard: dry-run preview (no files written)", "info");
-    // eslint-disable-next-line no-console
-    console.log("\n=== AGENTS.md preview ===\n" + agentsContent);
-    if (!opts.textOnly) {
-      // eslint-disable-next-line no-console
-      console.log("=== HTML preview omitted (" + htmlContent.length + " chars) ===");
-    }
-    return;
-  }
-
-  // 6. Write AGENTS.md
-  let agentsResult;
-  try {
-    agentsResult = writeAgentsMd(ctx.cwd, agentsContent, opts.force, false);
-  } catch (e) {
-    ctx.ui.notify(`pi-onboard: failed to write AGENTS.md — ${e}`, "error");
-    return;
-  }
-
-  // 7. Write HTML (unless --text-only)
-  let htmlResult: { path: string; action: string } | undefined;
-  if (!opts.textOnly) {
-    try {
-      htmlResult = writeHtml(ctx.cwd, htmlContent, opts.force, false);
-    } catch (e) {
-      ctx.ui.notify(`pi-onboard: failed to write HTML — ${e}`, "error");
-    }
-  }
-
-  // 8. Serve (unless --no-serve / --text-only)
+  // 2. Start server (unless --no-serve / --text-only)
   let serverInfo: ServerInfo | null = null;
   if (!opts.noServe && !opts.textOnly) {
     try {
@@ -127,71 +66,150 @@ async function runOnboard(opts: Options, ctx: ExtensionCommandContext): Promise<
     }
   }
 
-  // 9. Completion summary
-  const summary = buildSummary(analysis, agentsResult, htmlResult, serverInfo, opts, interviewNote);
-  ctx.ui.notify(summary, "info");
+  // 3. Build the prompt
+  const prompt = buildPrompt(repo, opts, serverInfo);
+
+  // 4. Fill the editor so the user can press Enter to send
+  ctx.ui.setEditorText(prompt);
+
+  // 5. Notify
+  const servingNote = serverInfo
+    ? `\n\nServing at:\n${serverInfo.urls.map((u) => `  ${u}`).join("\n")}\n  (bound to 0.0.0.0 — visible to other machines on this network)`
+    : "";
+  ctx.ui.notify(
+    `pi-onboard: press Enter to start the analysis.${servingNote}`,
+    "info",
+  );
 }
 
-/**
- * Build the completion summary per DESIGN.md "Suggested Completion Summary".
- */
-function buildSummary(
-  analysis: Analysis,
-  agentsResult: { path: string; action: string },
-  htmlResult: { path: string; action: string } | undefined,
-  serverInfo: ServerInfo | null,
+// ---------------------------------------------------------------------------
+// Prompt builder
+// ---------------------------------------------------------------------------
+
+function buildPrompt(
+  repo: ReturnType<typeof discover>,
   opts: Options,
-  interviewNote: string | undefined,
+  serverInfo: ServerInfo | null,
 ): string {
-  const lines: string[] = ["pi-onboard complete."];
+  const lines: string[] = [];
 
-  // Created files
-  lines.push("Created:");
-  lines.push(`- ${agentsResult.path} (${agentsResult.action})`);
-  if (htmlResult) {
-    lines.push(`- ${htmlResult.path} (${htmlResult.action})`);
-  }
-
-  // Serving block
-  if (serverInfo) {
-    const timeoutLabel = opts.idleTimeout === 0
-      ? "(no auto-stop)"
-      : `for ${opts.idleTimeout} min, then auto-stops`;
-    const reuseLabel = serverInfo.reused ? " (reusing running server)" : "";
-    lines.push("");
-    lines.push(`Serving ${timeoutLabel}${reuseLabel}:`);
-    for (const url of serverInfo.urls) {
-      lines.push(`- ${url}`);
-    }
-    if (opts.host === "0.0.0.0") {
-      lines.push("");
-      lines.push("Note: bound to 0.0.0.0 — visible to other machines on this network.");
-    }
-  }
-
-  // Confidence notes
+  lines.push("## Onboarding Analysis");
   lines.push("");
-  lines.push("Confidence notes:");
-  if (analysis.stack.length > 0) {
-    lines.push(`- detected stack: ${analysis.stack[0].confidence}`);
+  lines.push("Thoroughly understand this repository and generate two onboarding artifacts. Use your tools (read, bash, write, edit) to inspect the repo, then write the files.");
+  lines.push("");
+
+  // Discovery context
+  lines.push("### Quick discovery (pre-scanned)");
+  lines.push("```json");
+  lines.push(JSON.stringify({
+    name: repo.name,
+    description: repo.description,
+    runtime: repo.runtime,
+    languages: repo.languages.slice(0, 5),
+    scripts: repo.scripts,
+    dependencies: repo.dependencies,
+    devDependencies: repo.devDependencies,
+    topDirs: repo.topDirs.map((d) => d.name),
+    importantFiles: repo.importantFiles,
+    hasExistingContext: repo.hasExistingContext,
+  }, null, 2));
+  lines.push("```");
+  lines.push("");
+
+  // Instructions
+  lines.push("### Steps");
+  lines.push("1. Read the README, manifests, and key source files to understand what this project actually does.");
+  lines.push("2. Identify: project purpose, tech stack, important directories, commands (run/test/lint/build), conventions, entry points.");
+  lines.push(`3. Write \`AGENTS.md\` in the repo root${opts.force ? " (overwrite if exists — --force is set)" : " (use draft if file exists without pi-onboard markers)"}.`);
+  if (!opts.textOnly) {
+    lines.push(`4. Write \`pi-onboard-overview.html\` in the repo root${opts.force ? " (overwrite if exists)" : " (use draft if file exists without the pi-onboard marker)"}.`);
   }
-  const testCmd = analysis.commands.find((c) => c.label === "Test");
-  if (testCmd) {
-    lines.push(`- detected test command: ${testCmd.confidence}`);
+  lines.push("");
+
+  // AGENTS.md format
+  lines.push("### AGENTS.md format");
+  lines.push("Lean and practical (50-150 lines). Use pi-onboard section markers for safe future updates:");
+  lines.push("");
+  lines.push("```markdown");
+  lines.push("# AGENTS.md");
+  lines.push("");
+  lines.push('> Auto-generated by pi-onboard. Review before committing.');
+  lines.push("");
+  lines.push("<!-- pi-onboard:START section=purpose -->");
+  lines.push("## Project purpose");
+  lines.push("(1-3 sentences on what this project actually does — be specific)");
+  lines.push("<!-- pi-onboard:END section=purpose -->");
+  lines.push("");
+  lines.push("<!-- pi-onboard:START section=stack -->");
+  lines.push("## Tech stack");
+  lines.push("(languages, frameworks, runtimes)");
+  lines.push("<!-- pi-onboard:END section=stack -->");
+  lines.push("");
+  lines.push("<!-- pi-onboard:START section=paths -->");
+  lines.push("## Important paths");
+  lines.push("- `dir/` — what's in it and why it matters");
+  lines.push("<!-- pi-onboard:END section=paths -->");
+  lines.push("");
+  lines.push("<!-- pi-onboard:START section=commands -->");
+  lines.push("## Commands");
+  lines.push("- **Run**: `command`");
+  lines.push("- **Test**: `command`");
+  lines.push("- **Lint**: `command`");
+  lines.push("- **Build**: `command`");
+  lines.push("(label uncertain commands as 'likely')");
+  lines.push("<!-- pi-onboard:END section=commands -->");
+  lines.push("");
+  lines.push("<!-- pi-onboard:START section=conventions -->");
+  lines.push("## Working conventions");
+  lines.push("(patterns and gotchas discovered in the code)");
+  lines.push("<!-- pi-onboard:END section=conventions -->");
+  lines.push("");
+  lines.push("<!-- pi-onboard:START section=where-to-start -->");
+  lines.push("## Where to start when making changes");
+  lines.push("(entry points, first files to read)");
+  lines.push("<!-- pi-onboard:END section=where-to-start -->");
+  lines.push("");
+  lines.push("<!-- pi-onboard:START section=uncertainties -->");
+  lines.push("## Open uncertainties");
+  lines.push("(things you couldn't determine)");
+  lines.push("<!-- pi-onboard:END section=uncertainties -->");
+  lines.push("```");
+  lines.push("");
+
+  // File safety
+  lines.push("### File safety");
+  if (opts.force) {
+    lines.push("- **--force**: overwrite both files in place.");
+  } else {
+    lines.push("- If `AGENTS.md` exists **without** pi-onboard markers → write `AGENTS.pi-onboard.draft.md`.");
+    lines.push("- If `AGENTS.md` exists **with** markers → update only marked sections.");
+    lines.push("- If HTML exists without `<!-- generated by pi-onboard -->` → write `.draft.html`.");
   }
-  const lintCmd = analysis.commands.find((c) => c.label === "Lint");
-  if (lintCmd) {
-    lines.push(`- detected lint command: ${lintCmd.confidence}`);
-  }
-  if (analysis.purposeConfidence) {
-    lines.push(`- detected purpose: ${analysis.purposeConfidence}`);
+  lines.push("");
+
+  // HTML format
+  if (!opts.textOnly) {
+    lines.push("### HTML overview format");
+    lines.push("Single self-contained `pi-onboard-overview.html`:");
+    lines.push("- First line: `<!-- generated by pi-onboard -->`");
+    lines.push("- Dark theme, card-based, collapsible sections, embedded CSS, minimal inline JS");
+    lines.push("- NO external dependencies or CDNs");
+    lines.push("- Sections: summary card, repo structure, commands, conventions, where to start");
+    if (serverInfo) {
+      lines.push("");
+      lines.push("The HTML is being served at:");
+      for (const url of serverInfo.urls) {
+        lines.push(`- ${url}`);
+      }
+      lines.push("(server reads the file on each request, so output is live immediately)");
+    }
+    lines.push("");
+  } else {
+    lines.push("### Note: --text-only is set, skip HTML entirely.");
+    lines.push("");
   }
 
-  // Interview note
-  if (interviewNote) {
-    lines.push("");
-    lines.push(`Note: ${interviewNote}`);
-  }
+  lines.push("After writing the files, print a brief summary of what you generated.");
 
   return lines.join("\n");
 }
