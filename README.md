@@ -1,32 +1,27 @@
 # pi-onboard
 
-> **Status: design stage.** The `/onboard` extension is not yet implemented. This
-> repository currently holds the design and research docs ([`docs/`](./docs)).
-> The install commands below describe the intended release. Star/watch if you
-> want the first cut.
-
 A [Pi](https://pi.dev) extension for onboarding into an unfamiliar repository.
-Run `/onboard` and pi-onboard inspects the repo, infers what it is and how it's
-built, and writes durable orientation artifacts you (and future coding-agent
-sessions) can actually use.
+
+Run `/onboard` and pi-onboard does a quick static discovery pass, then fills
+your editor with a structured prompt. Press **Enter** and the agent reads your
+source files, understands the project, and writes durable orientation artifacts
+you (and future coding-agent sessions) can actually use.
 
 ## What it produces
 
 Two artifacts in the repo root:
 
-- **`AGENTS.md`** — a lean, confidence-aware context file for future harness
-  sessions. Hand-edits are never clobbered: pi-onboard updates only its own
-  marker-bounded sections, or writes a `AGENTS.pi-onboard.draft.md` if the file
-  was authored by hand.
+- **`AGENTS.md`** — a clean, practical context file for future harness sessions.
+  Safe by default: if `AGENTS.md` already exists, a `.draft` variant is created
+  instead of clobbering your work.
 - **`pi-onboard-overview.html`** — a single-file, dark, interactive visual
-  overview (repo map, commands with confidence badges, conventions, where to
-  start). It is also served over HTTP so you can open it from a browser on
-  another machine.
+  overview (repo map, commands, conventions, where to start). Served over HTTP
+  so you can open it from a browser on another machine.
 
 ## Install
 
 ```bash
-# from npm (once released)
+# from npm
 pi install npm:@nathanpt/pi-onboard
 
 # from git
@@ -49,15 +44,21 @@ pi -e npm:@nathanpt/pi-onboard
 /onboard --help             # show usage
 ```
 
+After running `/onboard`, a structured prompt appears in your editor. Press
+**Enter** to let the agent analyze the repo and generate the files.
+
 ## How it works
 
-- **AI-driven.** The command does a quick static discovery pass to gather
-  repo signals (dependencies, scripts, directories, README excerpt), then fills
-  your editor with a structured prompt. Press Enter and the agent reads your
-  source files, understands the project, and writes genuinely useful artifacts.
-- **Safe by default.** Existing files are never silently overwritten — a
-  `.draft` variant is created instead.
-- **Node/TypeScript and Python first.** Other ecosystems are best-effort.
+1. **Discovery** — scans package manifests, README, CI configs, and directory
+   structure to gather repo signals.
+2. **Server** — starts an HTTP server (unless `--no-serve`) so the HTML
+   overview is immediately reachable from any browser on your network.
+3. **Prompt** — fills your editor with the discovery context and instructions.
+   Press Enter and the agent reads your actual source files, understands the
+   project, and writes both artifacts.
+
+**Safe by default** — existing files are never silently overwritten; a `.draft`
+variant is created instead. Use `--force` to overwrite in place.
 
 ## Security note
 
