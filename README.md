@@ -40,34 +40,23 @@ pi -e npm:@nathanpt/pi-onboard
 
 ```text
 /onboard                    # full analysis, safe write
-/onboard --dry-run          # preview output, write nothing
 /onboard --force            # overwrite existing files
 /onboard --text-only        # skip the HTML overview (and the server)
 /onboard --no-serve         # write the HTML file but don't start a server
 /onboard --port 4321        # pin a server port (default: OS-assigned)
 /onboard --host 127.0.0.1   # bind address (default: 0.0.0.0)
 /onboard --idle-timeout 60  # server idle shutdown, minutes (default: 30)
-/onboard --yes              # skip the preference interview, use defaults
 /onboard --help             # show usage
 ```
 
-### Adaptive preference interview
-
-When the host session provides an `ask_user_question`-style tool, pi-onboard
-asks a short set of questions before generating — most importantly the
-**detail level** (concise / balanced / detailed), since overlong context files
-are known to degrade agent performance. When the tool is absent, it falls back
-to defaults and never blocks. Pass `--yes` to skip it.
-
 ## How it works
 
-- **Static-first.** All inference comes from repo file signals
-  (`package.json`, `pyproject.toml`, `Makefile`, CI configs, etc.). No LLM is
-  used for discovery or generation — only optionally for the preference
-  interview.
-- **Confidence-aware.** Every inferred command carries a confidence level
-  (high / medium / low); guesses with no supporting signal are suppressed.
-- **Safe by default.** Existing files are never silently overwritten.
+- **AI-driven.** The command does a quick static discovery pass to gather
+  repo signals (dependencies, scripts, directories, README excerpt), then fills
+  your editor with a structured prompt. Press Enter and the agent reads your
+  source files, understands the project, and writes genuinely useful artifacts.
+- **Safe by default.** Existing files are never silently overwritten — a
+  `.draft` variant is created instead.
 - **Node/TypeScript and Python first.** Other ecosystems are best-effort.
 
 ## Security note

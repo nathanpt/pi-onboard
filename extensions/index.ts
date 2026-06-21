@@ -1,22 +1,25 @@
 /**
  * pi-onboard — Pi extension for repository onboarding.
  *
- * The /onboard command does a quick static discovery pass, then fills the
- * editor with a structured prompt for the AI agent. The user presses Enter
- * and the agent reads key files, writes AGENTS.md and pi-onboard-overview.html.
- *
- * Architecture: AI-driven prompt. Static discovery provides context; the
- * agent provides understanding. We use setEditorText instead of
- * sendUserMessage to avoid stale-ctx errors in co-loaded extensions.
+ * The /onboard command does a quick static discovery pass, starts an HTTP
+ * server for the HTML overview, then fills the editor with a structured
+ * prompt. The user presses Enter and the agent reads key files and writes
+ * AGENTS.md and pi-onboard-overview.html.
  */
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import { readFileSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { getArgumentCompletions, parseArgs, USAGE } from "./flags.ts";
 import { discover } from "./discovery.ts";
 import { ensureServer, closeServer, type ServerInfo } from "./server.ts";
-import type { Options } from "./types.ts";
+import type { Options, RepoContext } from "./types.ts";
+
+// Load the prompt template once at module init.
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const PROMPT_TEMPLATE = readFileSync(join(__dirname, "prompt-template.md"), "utf-8");
 
 export default function onboardExtension(pi: ExtensionAPI) {
-  // Close any active server on session shutdown (cleanup insurance).
   pi.on("session_shutdown", () => {
     closeServer();
   });
@@ -42,13 +45,9 @@ export default function onboardExtension(pi: ExtensionAPI) {
   });
 }
 
-/**
- * Main flow: discover → start server → build prompt → fill editor.
- * The user presses Enter and the agent does the rest.
- */
 async function runOnboard(opts: Options, ctx: ExtensionCommandContext): Promise<void> {
-  // 1. Quick static discovery for context
-  let repo;
+  // 1. Discovery with enriched context
+  let repo: RepoContext;
   try {
     repo = discover(ctx.cwd);
   } catch (e) {
@@ -56,7 +55,7 @@ async function runOnboard(opts: Options, ctx: ExtensionCommandContext): Promise<
     return;
   }
 
-  // 2. Start server (unless --no-serve / --text-only)
+  // 2. Start server
   let serverInfo: ServerInfo | null = null;
   if (!opts.noServe && !opts.textOnly) {
     try {
@@ -66,10 +65,10 @@ async function runOnboard(opts: Options, ctx: ExtensionCommandContext): Promise<
     }
   }
 
-  // 3. Build the prompt
+  // 3. Build the prompt from template
   const prompt = buildPrompt(repo, opts, serverInfo);
 
-  // 4. Fill the editor so the user can press Enter to send
+  // 4. Fill the editor
   ctx.ui.setEditorText(prompt);
 
   // 5. Notify
@@ -87,23 +86,15 @@ async function runOnboard(opts: Options, ctx: ExtensionCommandContext): Promise<
 // ---------------------------------------------------------------------------
 
 function buildPrompt(
-  repo: ReturnType<typeof discover>,
+  repo: RepoContext,
   opts: Options,
   serverInfo: ServerInfo | null,
 ): string {
-  const lines: string[] = [];
-
-  lines.push("## Onboarding Analysis");
-  lines.push("");
-  lines.push("Thoroughly understand this repository and generate two onboarding artifacts. Use your tools (read, bash, write, edit) to inspect the repo, then write the files.");
-  lines.push("");
-
-  // Discovery context
-  lines.push("### Quick discovery (pre-scanned)");
-  lines.push("```json");
-  lines.push(JSON.stringify({
+  // Build discovery JSON with enriched content
+  const discoveryData = {
     name: repo.name,
     description: repo.description,
+    readmeExcerpt: repo.readmeSummary?.slice(0, 500),
     runtime: repo.runtime,
     languages: repo.languages.slice(0, 5),
     scripts: repo.scripts,
@@ -112,89 +103,43 @@ function buildPrompt(
     topDirs: repo.topDirs.map((d) => d.name),
     importantFiles: repo.importantFiles,
     hasExistingContext: repo.hasExistingContext,
-  }, null, 2));
-  lines.push("```");
-  lines.push("");
+  };
 
-  // Instructions
-  lines.push("### Steps");
-  lines.push("1. Read the README, manifests, and key source files to understand what this project actually does.");
-  lines.push("2. Identify: project purpose, tech stack, important directories, commands (run/test/lint/build), conventions, entry points.");
-  lines.push(`3. Write \`AGENTS.md\` in the repo root${opts.force ? " (overwrite if exists — --force is set)" : " (use draft filename if file already exists)"}.`);
-  if (!opts.textOnly) {
-    lines.push(`4. Write \`pi-onboard-overview.html\` in the repo root${opts.force ? " (overwrite if exists)" : " (use draft filename if file already exists)"}.`);
-  }
-  lines.push("");
+  // Safety strings
+  const agentsSafety = opts.force
+    ? " (overwrite if exists — --force is set)"
+    : " (use draft filename if file already exists)";
 
-  // AGENTS.md format
-  lines.push("### AGENTS.md format");
-  lines.push("Write clean, well-formatted markdown. Lean and practical (50-150 lines). Do NOT include any HTML comments or hidden markers — just plain readable markdown.");
-  lines.push("");
-  lines.push("```markdown");
-  lines.push("# AGENTS.md");
-  lines.push("");
-  lines.push("> Auto-generated by pi-onboard. Review before committing.");
-  lines.push("");
-  lines.push("## Project purpose");
-  lines.push("(1-3 sentences on what this project actually does — be specific)");
-  lines.push("");
-  lines.push("## Tech stack");
-  lines.push("- TypeScript / Node.js / etc. with versions if known");
-  lines.push("- Key frameworks and libraries");
-  lines.push("");
-  lines.push("## Important paths");
-  lines.push("- `dir/` — what's in it and why it matters");
-  lines.push("");
-  lines.push("## Commands");
-  lines.push("- **Run**: `command` — what it does");
-  lines.push("- **Test**: `command` — what it does");
-  lines.push("- **Lint**: `command` (label uncertain ones as 'likely')");
-  lines.push("- **Build**: `command`");
-  lines.push("");
-  lines.push("## Working conventions");
-  lines.push("(patterns and gotchas discovered in the code)");
-  lines.push("");
-  lines.push("## Where to start when making changes");
-  lines.push("1. Read `file` — why");
-  lines.push("2. Check `dir/` — why");
-  lines.push("");
-  lines.push("## Open uncertainties");
-  lines.push("(things you couldn't determine — be honest)");
-  lines.push("```");
-  lines.push("");
+  const fileSafety = opts.force
+    ? "- **--force**: overwrite both files in place if they exist."
+    : "- If `AGENTS.md` already exists → write `AGENTS.pi-onboard.draft.md` instead.\n- If `pi-onboard-overview.html` already exists → write `pi-onboard-overview.draft.html` instead.";
 
-  // File safety
-  lines.push("### File safety");
-  if (opts.force) {
-    lines.push("- **--force**: overwrite both files in place if they exist.");
-  } else {
-    lines.push("- If `AGENTS.md` already exists → write `AGENTS.pi-onboard.draft.md` instead.");
-    lines.push("- If `pi-onboard-overview.html` already exists → write `pi-onboard-overview.draft.html` instead.");
-  }
-  lines.push("");
+  const htmlStep = opts.textOnly
+    ? ""
+    : `4. Write \`pi-onboard-overview.html\` in the repo root${opts.force ? " (overwrite if exists)" : " (use draft filename if file already exists)"}.`;
 
-  // HTML format
-  if (!opts.textOnly) {
-    lines.push("### HTML overview format");
-    lines.push("Single self-contained `pi-onboard-overview.html`:");
-    lines.push("- Dark theme, card-based, collapsible sections, embedded CSS, minimal inline JS");
-    lines.push("- NO external dependencies or CDNs");
-    lines.push("- Sections: summary card, repo structure, commands, conventions, where to start");
-    if (serverInfo) {
-      lines.push("");
-      lines.push("The HTML is being served at:");
-      for (const url of serverInfo.urls) {
-        lines.push(`- ${url}`);
-      }
-      lines.push("(server reads the file on each request, so output is live immediately)");
-    }
-    lines.push("");
-  } else {
-    lines.push("### Note: --text-only is set, skip HTML entirely.");
-    lines.push("");
-  }
+  const htmlFormat = opts.textOnly
+    ? "### Note: --text-only is set, skip HTML entirely.\n"
+    : [
+        "### HTML overview format",
+        "Single self-contained `pi-onboard-overview.html`:",
+        "- Dark theme, card-based, collapsible sections, embedded CSS, minimal inline JS",
+        "- NO external dependencies or CDNs",
+        "- Sections: summary card, repo structure, commands, conventions, where to start",
+        ...(serverInfo
+          ? ["", "The HTML is being served at:", ...serverInfo.urls.map((u) => `- ${u}`), "(server reads the file on each request, so output is live immediately)"]
+          : []),
+        "",
+      ].join("\n");
 
-  lines.push("After writing the files, print a brief summary of what you generated.");
+  const textOnlyNote = opts.textOnly ? "### Note: --text-only is set, skip HTML entirely.\n" : "";
 
-  return lines.join("\n");
+  // Fill the template
+  return PROMPT_TEMPLATE
+    .replace("{{{DISCOVERY_JSON}}}", JSON.stringify(discoveryData, null, 2))
+    .replace("{{{AGENTS_SAFETY}}}", agentsSafety)
+    .replace("{{{HTML_STEP}}}", htmlStep)
+    .replace("{{{FILE_SAFETY}}}", fileSafety)
+    .replace("{{{HTML_FORMAT}}}", htmlFormat)
+    .replace("{{{TEXT_ONLY_NOTE}}}", textOnlyNote);
 }

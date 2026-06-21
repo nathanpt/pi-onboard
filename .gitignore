@@ -16,3 +16,4 @@ node_modules/
 
 # npm publish artifact
 *.tgz
+.npmrc

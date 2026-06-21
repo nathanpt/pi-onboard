@@ -1,25 +1,6 @@
 /**
  * Shared types for pi-onboard.
- *
- * The data flows discovery → synthesis → artifacts:
- *   discover(cwd): RepoContext        (raw signals)
- *   synthesize(ctx): Analysis          (inferred understanding)
- *   generateAgentsMd(html)(analysis)   (durable artifacts)
  */
-
-/** Confidence level for an inferred value. */
-export type Confidence = "high" | "medium" | "low";
-
-/** An inferred command (run/test/lint/build) with its evidence and confidence. */
-export interface Command {
-  /** Category label: "Run", "Test", "Lint", "Build", etc. */
-  label: string;
-  /** The command string, e.g. "npm test". */
-  command: string;
-  confidence: Confidence;
-  /** What file/signal supported this inference, e.g. "package.json scripts.test". */
-  evidence: string;
-}
 
 /** A top-level or known-important directory with an explanation. */
 export interface DirEntry {
@@ -29,7 +10,7 @@ export interface DirEntry {
 
 /**
  * Raw repo signals collected by the discovery layer.
- * Everything here is directly observed — no inference yet.
+ * Everything here is directly observed — no inference.
  */
 export interface RepoContext {
   /** Absolute path of the inspected directory. */
@@ -58,38 +39,6 @@ export interface RepoContext {
   hasExistingContext: boolean;
 }
 
-/** A language/framework detected in the repo. */
-export interface StackEntry {
-  name: string;
-  confidence: Confidence;
-}
-
-/** The synthesized understanding of the repo. */
-export interface Analysis {
-  name: string;
-  purpose: string;
-  purposeConfidence: Confidence;
-  stack: StackEntry[];
-  commands: Command[];
-  importantDirs: DirEntry[];
-  conventions: string[];
-  /** Honest notes about what could not be determined. */
-  uncertainties: string[];
-  /** Suggested first files to read. */
-  startingPoints: string[];
-}
-
-/** User preferences (from interview or defaults). */
-export interface Preferences {
-  detail: "concise" | "balanced" | "detailed";
-  /** Minimum confidence for commands to appear in output. */
-  floor: Confidence;
-  /** Whether to emit the HTML overview. */
-  html: boolean;
-  /** Section ids to include. */
-  sections: string[];
-}
-
 /** Parsed command-line options. */
 export interface Options {
   dryRun: boolean;
@@ -102,14 +51,4 @@ export interface Options {
   host: string;
   /** Server idle shutdown in minutes; 0 = never. */
   idleTimeout: number;
-  /** Skip the preference interview. */
-  yes: boolean;
 }
-
-/** Default preferences (used when interview is absent, skipped, or fails). */
-export const DEFAULT_PREFERENCES: Preferences = {
-  detail: "balanced",
-  floor: "medium",
-  html: true,
-  sections: ["purpose", "stack", "paths", "commands", "conventions", "where-to-start", "uncertainties"],
-};
