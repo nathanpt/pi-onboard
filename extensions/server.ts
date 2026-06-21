@@ -25,6 +25,7 @@ let activeServer: Server | null = null;
 let activePort = 0;
 let activeToken = "";
 let activeHost = "0.0.0.0";
+let activeCwd = "";
 let idleTimer: ReturnType<typeof setTimeout> | null = null;
 
 /**
@@ -34,8 +35,9 @@ let idleTimer: ReturnType<typeof setTimeout> | null = null;
 export async function ensureServer(cwd: string, opts: Options): Promise<ServerInfo | null> {
   if (opts.noServe || opts.textOnly) return null;
 
-  // Reuse existing server
+  // Reuse existing server — update cwd so it serves the latest HTML
   if (activeServer && activeServer.listening) {
+    activeCwd = cwd;
     resetIdleTimer(opts.idleTimeout);
     return { urls: buildUrls(activeHost, activePort, activeToken), reused: true, port: activePort };
   }
@@ -56,7 +58,8 @@ export async function ensureServer(cwd: string, opts: Options): Promise<ServerIn
     }
 
     // Read the HTML file fresh each request (dumb byte-pipe)
-    const htmlPath = join(cwd, HTML_FILE);
+    // Uses activeCwd so reused servers serve the latest repo's HTML
+    const htmlPath = join(activeCwd || cwd, HTML_FILE);
     try {
       const content = readFileSync(htmlPath);
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
@@ -83,6 +86,7 @@ export async function ensureServer(cwd: string, opts: Options): Promise<ServerIn
   activeServer = server;
   activeToken = token;
   activeHost = host;
+  activeCwd = cwd;
 
   // Start idle timer
   resetIdleTimer(opts.idleTimeout);
@@ -100,6 +104,7 @@ export function closeServer(): void {
     activeServer.close();
     activeServer = null;
   }
+  activeCwd = "";
 }
 
 // ---------------------------------------------------------------------------

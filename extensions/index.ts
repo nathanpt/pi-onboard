@@ -159,7 +159,7 @@ function buildSummary(
       : `for ${opts.idleTimeout} min, then auto-stops`;
     const reuseLabel = serverInfo.reused ? " (reusing running server)" : "";
     lines.push("");
-    lines.push(`Serving (${timeoutLabel}${reuseLabel}):`);
+    lines.push(`Serving ${timeoutLabel}${reuseLabel}:`);
     for (const url of serverInfo.urls) {
       lines.push(`- ${url}`);
     }
